@@ -5,9 +5,11 @@ use_para: true
 exp_name : eval_ehrsql_mimic3_t5_base_schema__mimic3_valid
 
 mode: eval
-load_model_path: outputs/ehrsql_mimic3_t5_base_schema/checkpoint_best.pth.tar
+load_model_path: mistralai/Mixtral-8x7B-Instruct-v0.1
 eval_batch_size: 8
 
 tables_path: dataset/ehrsql/tables.json
 add_schema: true
 shuffle_schema: false
+
+# python T5/main.py --config T5\config\ehrsql\eval\ehrsql_mimic3_t5_base_schema__mimic3_valid.yaml --output_file prediction_raw.json --CUDA_VISIBLE_DEVICES "cpu"
