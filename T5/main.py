@@ -1,21 +1,31 @@
-import sys, os
-sys.path.append(os.getcwd())
+# T5/main.py
+
+import sys
+import os
+# Add the project root directory to sys.path
+# This assumes that 'main.py' is inside 'EHRSQL/T5/'
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(project_root)
+
 import json
 import numpy as np
 import argparse
 import yaml
 
 import torch
-from utils.model_utils import set_seeds, load, update_args
+from utils.model_utils import set_seeds
 from utils.optim import set_optim
 from utils.dataset import EHRSQL_Dataset, DataCollator
 from utils.logger import init_logger
 from config import Config
 
-# from T5.model import load_model, load_tokenizer
-from transformers import AutoTokenizer  # Use HuggingFace tokenizer
+from transformers import pipeline  # Updated import for pipeline
 from dotenv import load_dotenv
 load_dotenv()
+
+from huggingface_hub import login
+
+login(token = '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')
 
 if __name__ == '__main__':
     args = Config()
@@ -25,6 +35,7 @@ if __name__ == '__main__':
     args.parser.add_argument('--config', required=True, type=str)
     args.parser.add_argument('--CUDA_VISIBLE_DEVICES', type=str)
     args = args.parse()
+    
     with open(args.config, 'r') as f:
         config = yaml.load(f, yaml.SafeLoader)
     for k, v in config.items():
@@ -33,78 +44,96 @@ if __name__ == '__main__':
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = args.CUDA_VISIBLE_DEVICES if args.device == 'cuda' else ""
-    if torch.cuda.is_available():
+    
+    if torch.cuda.is_available() and args.device == 'cuda':
+        device = torch.device(f'cuda:{args.CUDA_VISIBLE_DEVICES}')
         print(f'Current device: cuda:{args.CUDA_VISIBLE_DEVICES}')
     else:
+        device = torch.device('cpu')
         print('Current device: cpu')
+    
     set_seeds(args.random_seed)
-
+    
     output_path = os.path.join(args.output_dir, args.exp_name)
     if os.path.exists(output_path):
-        raise Exception(f"directory already exists ({output_path})")
-
+        raise Exception(f"Directory already exists ({output_path})")
+    
     logger = None
     if args.mode == 'train':
         logger = init_logger(output_path, args)
         logger.info(args)
 
-    if args.use_wandb:
-        import wandb
-        from wandb_api_key import WANDB_API_KEY
-        os.environ["WANDB_API_KEY"] = WANDB_API_KEY
-        if args.mode == 'train':
-            wandb.init(project=args.wandb_project, name=args.exp_name)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)  # Updated tokenizer loading
-    data_collator = DataCollator(tokenizer=tokenizer, return_tensors='pt')
+    # Initialize Hugging Face pipeline for text generation
+    model_id = args.model_name  # Ensure 'model_name' is specified in your config.yaml
+    pipe = pipeline(
+        "text-generation",
+        model=model_id,
+        torch_dtype=torch.bfloat16, #if args.device == 'cuda' else torch.float32,
+        device_map="auto",
+    )
+
+    
+    data_collator = DataCollator(tokenizer=None, return_tensors='pt')  # Tokenizer handled by pipeline
 
     if args.mode == 'train':
-        train_dataset = EHRSQL_Dataset(path=args.train_data_path, tokenizer=tokenizer, args=args, data_ratio=args.training_data_ratio)
-        valid_dataset = EHRSQL_Dataset(path=args.valid_data_path, tokenizer=tokenizer, args=args)
+        train_dataset = EHRSQL_Dataset(
+            path=args.train_data_path, 
+            tokenizer=None,  # Tokenizer handled by pipeline
+            args=args, 
+            data_ratio=args.training_data_ratio
+        )
+        valid_dataset = EHRSQL_Dataset(
+            path=args.valid_data_path, 
+            tokenizer=None,  # Tokenizer handled by pipeline
+            args=args
+        )
         if logger:
-            logger.info(f"loaded {len(train_dataset)} training examples from {args.train_data_path}")
-            logger.info(f"loaded {len(valid_dataset)} valid examples from {args.valid_data_path}")
+            logger.info(f"Loaded {len(train_dataset)} training examples from {args.train_data_path}")
+            logger.info(f"Loaded {len(valid_dataset)} valid examples from {args.valid_data_path}")
     elif args.mode == 'eval':
-        test_dataset = EHRSQL_Dataset(path=args.test_data_path, tokenizer=tokenizer, args=args, include_impossible=True)
-        print(f"loaded {len(test_dataset)} test examples from {args.test_data_path}")
+        test_dataset = EHRSQL_Dataset(
+            path=args.test_data_path, 
+            tokenizer=None,  # Tokenizer handled by pipeline
+            args=args, 
+            include_impossible=True
+        )
+        print(f"Loaded {len(test_dataset)} test examples from {args.test_data_path}")
+
+    if args.load_model_path and args.mode != 'train':
+        # Optionally load a fine-tuned model from a directory
+        pipe = pipeline(
+            "text-generation",
+            model=args.load_model_path,
+            torch_dtype=torch.bfloat16 if args.device == 'cuda' else torch.float32,
+            device_map="auto" if args.device == 'cuda' else None,
+        )
+        if logger:
+            logger.info(f"Loaded model from {args.load_model_path}")
+        else:
+            print(f"Loaded model from {args.load_model_path}")
+
+    if torch.cuda.device_count() > 1 and args.mode == 'train':
+        pipe.model = torch.nn.DataParallel(pipe.model)
 
     if args.mode == 'eval':
-        # No need to load the local model
-        import json
-        from T5.generate import generate_sql  # Ensure this uses Groq API
-        print("start inference")
-        out_eval = generate_sql(model=None, eval_dataset=test_dataset, args=args, collator=data_collator, verbose=1)
+        from T5.generate import generate_sql
+        print("Start inference")
+        out_eval = generate_sql(pipe=pipe, eval_dataset=test_dataset, args=args, collator=data_collator, verbose=1)
         os.makedirs(output_path, exist_ok=True)
         with open(os.path.join(output_path, args.output_file), 'w') as f:
             json.dump(out_eval, f)
     else:
-        # Only load the model for training
-        model = load_model(model_name=args.model_name)
-        if args.bf16:
-            model = model.to(torch.bfloat16)
-        if args.init_weights:
-            model.init_weights()
-        if args.load_model_path is None:
-            model = model.to(args.device)
-            optimizer, scheduler = set_optim(args, model)
-            step = 0
-            if args.eval_metric == 'loss':
-                best_metric = np.inf
-            elif args.eval_metric == 'esm':
-                best_metric = -np.inf
-        else:
-            model, optimizer, scheduler, args, step, best_metric = load(model, args.load_model_path, args)
-            if logger:
-                logger.info("loading checkpoint %s" % args.load_model_path)
-            else:
-                print("loading checkpoint %s" % args.load_model_path)
-        if torch.cuda.device_count() > 1:
-            model = torch.nn.DataParallel(model)
-
         from trainer_t5 import train
-        print("start training")
+        print("Start training")
+        optimizer, scheduler = set_optim(args, None)  # Pass None as model is handled by pipeline
+        step = 0
+        if args.eval_metric == 'loss':
+            best_metric = np.inf
+        elif args.eval_metric == 'esm':
+            best_metric = -np.inf
         train(
-            model=model,
+            pipe=pipe,
             optimizer=optimizer,
             scheduler=scheduler,
             step=step,

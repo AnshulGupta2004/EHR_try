@@ -5,7 +5,8 @@ from groq import Groq  # Replace with the actual import if different
 class GroqAPI:
     def __init__(self):
         self.client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model_name = "mixtral-8x7b-32768"  # Update if necessary
+        # self.model_name = "mixtral-8x7b-32768"  # Update if necessary
+        self.model_name = "llama3-70b-8192"
         self.system_prompt = {
             "role": "system",
             "content": "You are a helpful assistant specialized in generating SQL queries from natural language questions."
@@ -19,7 +20,7 @@ class GroqAPI:
 
         response = self.client.chat.completions.create(
             model=self.model_name,
-            messages=chat_history,
+            messages=chat_history, 
             max_tokens=max_tokens,
             temperature=temperature
         )
@@ -27,6 +28,6 @@ class GroqAPI:
         result = response.choices[0].message.content.strip()
 
         # Introduce a 1-second delay before the function can be called again
-        time.sleep(1)
+        time.sleep(10)
 
         return result

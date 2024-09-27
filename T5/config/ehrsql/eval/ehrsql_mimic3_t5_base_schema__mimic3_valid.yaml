@@ -1,15 +1,27 @@
+# config.yaml
+
 dataset: ehrsql
 db_id: mimic_iii
 test_data_path: dataset/ehrsql/mimic_iii/valid.json
 use_para: true
-exp_name : eval_ehrsql_mimic3_t5_base_schema__mimic3_valid
+exp_name: eval_ehrsql_mimic3_llama3_1B_schema__mimic3_valid
 
 mode: eval
-load_model_path: mistralai/Mixtral-8x7B-Instruct-v0.1
+load_model_path: meta-llama/Llama-3.2-1B-Instruct  # Model identifier from Hugging Face
 eval_batch_size: 8
 
 tables_path: dataset/ehrsql/tables.json
 add_schema: true
 shuffle_schema: false
+
+# Hugging Face model parameters
+model_name: "meta-llama/Llama-3.2-1B-Instruct"  # Replace with your desired model
+num_beams: 4
+max_length: 256
+num_samples: 1
+repetition_penalty: 1.0
+length_penalty: 1.0
+early_stopping: true
+
 
 # python T5/main.py --config T5\config\ehrsql\eval\ehrsql_mimic3_t5_base_schema__mimic3_valid.yaml --output_file prediction_raw.json --CUDA_VISIBLE_DEVICES "cpu"
